@@ -49,6 +49,10 @@ bool utf8_is_valid(const utf8_char encoding) {
     return false;
 }
 
+uint8_t utf8_char_length(const utf8_char encoding) {
+    return (4 - (__builtin_clz(encoding | 0xFF) / 8));
+}
+
 utf8_char utf8_encode(const uint32_t codepoint) {
     utf8_char encoding = 0;
 
@@ -74,7 +78,7 @@ utf8_char utf8_encode(const uint32_t codepoint) {
 }
 
 uint32_t utf8_decode(const utf8_char encoding) {
-    const uint8_t length = UTF8_CHAR_LENGTH(encoding);
+    const uint8_t length = utf8_char_length(encoding);
 
     // @formatter:off
     uint32_t codepoint = 0;
@@ -111,7 +115,7 @@ uint8_t utf8_next(const char *str, utf8_char *next) {
     }
 
     if (length == 0 || !utf8_is_valid(encoding)) {
-        fprintf(stderr, "\x1B[0;31mInvalid UTF-8 encoding: 0x%08X\x1B[0m\n", encoding);
+        fprintf(stderr, "\x1B[0;31mInvalid UTF-8: 0x%08X\x1B[0m\n", encoding);
         encoding = REPLACEMENT_CHARACTER;
         length = 3;
     }
@@ -119,4 +123,21 @@ uint8_t utf8_next(const char *str, utf8_char *next) {
     if (encoding && next) *next = encoding;
 
     return encoding ? length : 0; // Account for '\0'
+}
+
+utf8_str utf8_str_wrap(const char *str) {
+    if (!str) goto invalid;
+
+    size_t offset = 0;
+    utf8_char encoding = 0;
+    while (str[offset] != '\0') {
+        const uint8_t length = utf8_next(str + offset, &encoding);
+        if (encoding == REPLACEMENT_CHARACTER) goto invalid;
+        offset += length;
+    }
+
+    return (utf8_str) { .length = offset, .str = str };
+
+invalid:
+    return (utf8_str) { .length = 0, .str = NULL };
 }

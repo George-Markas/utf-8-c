@@ -1,12 +1,17 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 
 #define REPLACEMENT_CHARACTER 0xEFBFBD
-#define UTF8_CHAR_LENGTH(encoding) (4 - (__builtin_clz(encoding | 0xFF) / 8));
 
 typedef uint32_t utf8_char;
+
+typedef struct Utf8_String {
+    size_t length; // Excluding the null terminator
+    const char *str;
+} utf8_str;
 
 /**
  * Check if an encoding is valid UTF-8.
@@ -14,6 +19,15 @@ typedef uint32_t utf8_char;
  * @return True if the encoding is valid, false if it isn't.
  */
 bool utf8_is_valid(utf8_char encoding);
+
+/**
+ * Get the byte length of an encoding.
+ * @param encoding The encoding whose length to get.
+ * @return The encoding's byte length.
+ * @note This function does not check if the encoding is valid
+ * UTF-8, use utf8_is_valid() if needed.
+ */
+uint8_t utf8_char_length(utf8_char encoding);
 
 /**
  * Encode a Unicode codepoint using UTF-8.
@@ -30,7 +44,7 @@ utf8_char utf8_encode(uint32_t codepoint);
 uint32_t utf8_decode(utf8_char encoding);
 
 /**
- * Get the next UTF-8 encoding from a string.
+ * Get the next encoding from a string.
  * @param str The string to read from.
  * @param next Where the encoding will be saved.
  * @return The UTF-8 encoding's byte length or zero in case the encoding
@@ -41,3 +55,12 @@ uint32_t utf8_decode(utf8_char encoding);
  * 0xEFBFBD (the replacement character U+FFFD).
  */
 uint8_t utf8_next(const char *str, utf8_char *next);
+
+/**
+ * Get a `utf8_str` struct from a string.
+ * @param str The string.
+ * @return A `utf8_str` struct. On failure, str and length will be set to
+ * NULL and 0 respectively.
+ * @note Failure is when the given string contains invalid UTF-8, or is NULL.
+ */
+utf8_str utf8_str_wrap(const char *str);
