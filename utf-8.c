@@ -13,7 +13,11 @@
 */
 
 #include "utf-8.h"
+
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 
 #define UTF8_LENGTH(str) utf8_length[(((uint8_t *) str)[0] & 0xFF) >> 4]
 
@@ -125,7 +129,7 @@ uint8_t utf8_next(const char *str, utf8_char *next) {
     return encoding ? length : 0; // Account for '\0'
 }
 
-utf8_str utf8_str_wrap(const char *str) {
+utf8_str utf8_str_make(const char *str) {
     if (!str) goto invalid;
 
     size_t offset = 0;
@@ -140,4 +144,26 @@ utf8_str utf8_str_wrap(const char *str) {
 
 invalid:
     return (utf8_str) { .length = 0, .str = NULL };
+}
+
+utf8_str utf8_str_join(const utf8_str str1, const utf8_str str2) {
+    utf8_str ret = { .str = NULL, .length = str1.length + str2.length };
+    if (ret.length == 0) return ret;
+
+    char *buffer = malloc(ret.length + 1);
+    assert(buffer);
+
+    // This assumes empty strings have a length of 0, which they should unless tampered with
+    if (str1.str) memcpy(buffer, str1.str, str1.length);
+    if (str2.str) memcpy(buffer + str1.length, str2.str, str2.length);
+    buffer[ret.length] = '\0';
+    ret.str = buffer;
+
+    return ret;
+}
+
+void utf8_str_free(utf8_str str) {
+    free((void *) str.str);
+    str.str = NULL;
+    str.length = 0;
 }
