@@ -14,51 +14,22 @@
 
 #include "utf-8.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
-
-#define UTF8_LENGTH(str) utf8_length[(((uint8_t *) str)[0] & 0xFF) >> 4]
-
-// @formatter:off
-static uint8_t const utf8_length[] = {
- /* 0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F */
-    1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 2, 2, 3, 4
-};
-// @formatter:on
-
-bool utf8_is_valid(const utf8_char encoding) {
-    /* U+0000 - U+007F */
-    if (encoding <= 0x007F) return true;
-
-    /* U+0080 - U+07FF */
-    if (0xC280 <= encoding && encoding <= 0xDFBF)
-        // Ensure '110xxxxx 10xxxxxx' form
-        return ((encoding & 0xE0C0) == 0xC080);
-
-    /* Reject UTF-16 surrogates */
-    if (0xEDA080 <= encoding && encoding <= 0xEDBFBF) return false;
-
-    /* U+0800 - U+FFFF */
-    if (0xE0A080 <= encoding && encoding <= 0xEFBFBF)
-        // Ensure '1110xxxx 10xxxxxx 10xxxxxx' form
-        return ((encoding & 0xF0C0C0) == 0xE08080);
-
-    /* U+10000 - U+10FFFF */
-    if (0xF0908080 <= encoding && encoding <= 0xF48FBFBF)
-        // Ensure '11110xxx 10xxxxxx 10xxxxxx 10xxxxxx' form
-        return ((encoding & 0xF8C0C0C0) == 0xF0808080);
-
-    return false;
-}
-
-uint8_t utf8_char_length(const utf8_char encoding) {
+static uint8_t utf8_length_uint32_t(const utf8_char_t encoding) {
     return (4 - (__builtin_clz(encoding | 0xFF) / 8));
 }
 
-utf8_char utf8_encode(const uint32_t codepoint) {
-    utf8_char encoding = 0;
+static uint8_t utf8_length_char(const char *str) {
+    // @formatter:off
+    if (((str[0] & 0b10000000) >> 7) == 0b0)     return 1;
+    if (((str[0] & 0b11100000) >> 5) == 0b110)   return 2;
+    if (((str[0] & 0b11110000) >> 4) == 0b1110)  return 3;
+    if (((str[0] & 0b11111000) >> 3) == 0b11110) return 4;
+    // @formatter:on
+    return 0;
+}
+
+utf8_char_t utf8_encode(const uint32_t codepoint) {
+    utf8_char_t encoding = 0;
 
     // @formatter:off
     if (codepoint <= 0x007F) {
@@ -81,8 +52,8 @@ utf8_char utf8_encode(const uint32_t codepoint) {
     return encoding;
 }
 
-uint32_t utf8_decode(const utf8_char encoding) {
-    const uint8_t length = utf8_char_length(encoding);
+uint32_t utf8_decode(const utf8_char_t encoding) {
+    const uint8_t length = utf8_length_uint32_t(encoding);
 
     // @formatter:off
     uint32_t codepoint = 0;
@@ -110,60 +81,53 @@ uint32_t utf8_decode(const utf8_char encoding) {
     // @formatter:on
 }
 
-uint8_t utf8_next(const char *str, utf8_char *next) {
-    uint8_t length = UTF8_LENGTH(str);
-    utf8_char encoding = 0;
+bool utf8_validate_encoding(const utf8_char_t encoding) {
+    /* U+0000 - U+007F */
+    if (encoding <= 0x007F) return true;
+
+    /* U+0080 - U+07FF */
+    if (0xC280 <= encoding && encoding <= 0xDFBF)
+        // Ensure '110xxxxx 10xxxxxx' form
+        return ((encoding & 0xE0C0) == 0xC080);
+
+    /* Reject UTF-16 surrogates */
+    if (0xEDA080 <= encoding && encoding <= 0xEDBFBF) return false;
+
+    /* U+0800 - U+FFFF */
+    if (0xE0A080 <= encoding && encoding <= 0xEFBFBF)
+        // Ensure '1110xxxx 10xxxxxx 10xxxxxx' form
+        return ((encoding & 0xF0C0C0) == 0xE08080);
+
+    /* U+10000 - U+10FFFF */
+    if (0xF0908080 <= encoding && encoding <= 0xF48FBFBF)
+        // Ensure '11110xxx 10xxxxxx 10xxxxxx 10xxxxxx' form
+        return ((encoding & 0xF8C0C0C0) == 0xF0808080);
+
+    return false;
+}
+
+uint8_t utf8_encode_to_str(const uint32_t codepoint, char *buffer) {
+    const utf8_char_t encoding = utf8_encode(codepoint);
+    if (!utf8_validate_encoding(encoding)) return 0;
+    const uint8_t length = utf8_length_uint32_t(encoding);
+
+    for (int i = 0; i < length; i++) {
+        buffer[i] = (char) ((encoding >> (8 * (length - 1 - i))) & 0xFF);
+    }
+
+    return length;
+}
+
+int utf8_next(const char *str, utf8_char_t *next) {
+    const uint8_t length = utf8_length_char(str);
+    utf8_char_t encoding = 0;
 
     for (int i = 0; i < length && str[i] != '\0'; i++) {
         encoding = (encoding << 8) | (str[i] & 0xFF);
     }
 
-    if (length == 0 || !utf8_is_valid(encoding)) {
-        fprintf(stderr, "\x1B[0;31mInvalid UTF-8: 0x%08X\x1B[0m\n", encoding);
-        encoding = REPLACEMENT_CHARACTER;
-        length = 3;
-    }
-
+    if (length == 0 || !utf8_validate_encoding(encoding)) return UTF8_ERROR_INVALID;
     if (encoding && next) *next = encoding;
 
     return encoding ? length : 0; // Account for '\0'
-}
-
-utf8_str utf8_str_make(const char *str) {
-    if (!str) goto invalid;
-
-    size_t offset = 0;
-    utf8_char encoding = 0;
-    while (str[offset] != '\0') {
-        const uint8_t length = utf8_next(str + offset, &encoding);
-        if (encoding == REPLACEMENT_CHARACTER) goto invalid;
-        offset += length;
-    }
-
-    return (utf8_str) { .length = offset, .str = str };
-
-invalid:
-    return (utf8_str) { .length = 0, .str = NULL };
-}
-
-utf8_str utf8_str_join(const utf8_str str1, const utf8_str str2) {
-    utf8_str ret = { .str = NULL, .length = str1.length + str2.length };
-    if (ret.length == 0) return ret;
-
-    char *buffer = malloc(ret.length + 1);
-    assert(buffer);
-
-    // This assumes empty strings have a length of 0, which they should unless tampered with
-    if (str1.str) memcpy(buffer, str1.str, str1.length);
-    if (str2.str) memcpy(buffer + str1.length, str2.str, str2.length);
-    buffer[ret.length] = '\0';
-    ret.str = buffer;
-
-    return ret;
-}
-
-void utf8_str_free(utf8_str str) {
-    free((void *) str.str);
-    str.str = NULL;
-    str.length = 0;
 }
