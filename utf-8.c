@@ -14,6 +14,15 @@
 
 #include "utf-8.h"
 
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+
+#define PUT_REPLACEMENT_CHARACTER(buffer, index) \
+    buffer[index++] = 0xEF; \
+    buffer[index++] = 0xBF; \
+    buffer[index++] = 0xBD
+
 static uint8_t utf8_length_uint32_t(const utf8_char_t encoding) {
     return (4 - (__builtin_clz(encoding | 0xFF) / 8));
 }
@@ -53,11 +62,11 @@ utf8_char_t utf8_encode(const uint32_t codepoint) {
 }
 
 uint32_t utf8_decode(const utf8_char_t encoding) {
-    const uint8_t length = utf8_length_uint32_t(encoding);
+    const uint8_t encoding_length = utf8_length_uint32_t(encoding);
 
     // @formatter:off
     uint32_t codepoint = 0;
-    switch (length) {
+    switch (encoding_length) {
         case 1: return encoding;
         case 2:
             codepoint = ((encoding >> 8) & 0b00011111) << 6 |
@@ -107,27 +116,81 @@ bool utf8_validate_encoding(const utf8_char_t encoding) {
 }
 
 uint8_t utf8_encode_to_str(const uint32_t codepoint, char *buffer) {
-    const utf8_char_t encoding = utf8_encode(codepoint);
-    if (!utf8_validate_encoding(encoding)) return 0;
-    const uint8_t length = utf8_length_uint32_t(encoding);
+    const utf8_char_t encoding_length = utf8_encode(codepoint);
+    if (!utf8_validate_encoding(encoding_length)) return 0;
+    const uint8_t length = utf8_length_uint32_t(encoding_length);
 
     for (int i = 0; i < length; i++) {
-        buffer[i] = (char) ((encoding >> (8 * (length - 1 - i))) & 0xFF);
+        buffer[i] = (char) ((encoding_length >> (8 * (length - 1 - i))) & 0xFF);
     }
 
     return length;
 }
 
 int utf8_next(const char *str, utf8_char_t *next) {
-    const uint8_t length = utf8_length_char(str);
+    const uint8_t encoding_length = utf8_length_char(str);
     utf8_char_t encoding = 0;
 
-    for (int i = 0; i < length && str[i] != '\0'; i++) {
+    for (int i = 0; i < encoding_length && str[i] != '\0'; i++) {
         encoding = (encoding << 8) | (str[i] & 0xFF);
     }
 
-    if (length == 0 || !utf8_validate_encoding(encoding)) return UTF8_ERROR_INVALID;
+    if (encoding_length == 0 || !utf8_validate_encoding(encoding)) return UTF8_ERROR_INVALID;
     if (encoding && next) *next = encoding;
 
-    return encoding ? length : 0; // Account for '\0'
+    return encoding ? encoding_length : 0; // Account for '\0'
+}
+
+utf8_str_t utf8_str_t_new(const char *str) {
+    utf8_str_t ret = {.length = 0, .str = NULL};
+    if (!str) return ret;
+
+    // Worst case scenario, every encoding is invalid, thus we need at most
+    // 3 * N bytes + 1 byte for the null terminator, where N is the number
+    // of encodings and 3 is the byte length of the replacement character U+FFFD.
+    const size_t bytes = strlen(str);
+    const size_t buffer_capacity = bytes * 3 + 1;
+    char *buffer = malloc(sizeof(char) * buffer_capacity);
+    assert(buffer);
+
+    size_t i = 0, buffer_length = 0;
+    while (i < bytes) {
+        const uint8_t encoding_length = utf8_length_char(str);
+        // TODO: The replacement logic needs more polish
+        if (encoding_length) {
+            utf8_char_t encoding = 0;
+            for (size_t j = i; j < i + encoding_length; j++) {
+                encoding = (encoding << 8) | (str[j] & 0xFF);
+            }
+
+            if (utf8_validate_encoding(encoding)) {
+                memcpy(buffer + buffer_length, str + i, encoding_length);
+                buffer_length += encoding_length;
+                i += encoding_length;
+            } else {
+                PUT_REPLACEMENT_CHARACTER(buffer, buffer_length);
+                i += encoding_length;
+            }
+        } else {
+            PUT_REPLACEMENT_CHARACTER(buffer, buffer_length);
+            i += encoding_length;
+        }
+    }
+
+    if (buffer_length < buffer_capacity) {
+        char *shrunken_buffer = realloc(buffer, buffer_length + 1);
+        buffer = shrunken_buffer;
+    }
+
+    buffer[buffer_length] = '\0';
+    ret.str = buffer;
+    ret.length = buffer_length;
+
+    return ret;
+}
+
+void utf8_str_t_free(utf8_str_t str) {
+    free((void *) str.str);
+    str.str = NULL;
+    str.length = 0;
 }
